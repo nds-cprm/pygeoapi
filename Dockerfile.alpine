@@ -1,0 +1,15 @@
+FROM docker.io/library/python:3.10.12-alpine AS build
+
+RUN apk add \
+    gcc musl-dev linux-headers g++ \
+    gdal-dev hdf5-dev netcdf-dev libpq-dev \
+    openblas-dev geos-dev
+
+WORKDIR /var/lib/pygeoapi
+
+RUN python -m venv --prompt pygeoapi venv && \
+    source venv/bin/activate && \
+    pip install --no-cache --upgrade pip && \
+    pip install --no-cache wheel
+
+CMD [ "ash" ]
