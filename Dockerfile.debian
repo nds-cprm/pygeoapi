@@ -120,7 +120,6 @@ COPY . /pygeoapi
 
 # Install pygeoapi
 RUN . /pygeoapi/venv/bin/activate  && \
-    python3 -m pip install --no-cache-dir --upgrade setuptools && \
     python3 -m pip install --no-cache-dir -e .
 
 RUN \
