@@ -36,6 +36,9 @@ echo "START /entrypoint.sh"
 
 set +e
 
+# Activate venv
+. venv/bin/activate
+
 export PYGEOAPI_HOME=/pygeoapi
 export PYGEOAPI_CONFIG="${PYGEOAPI_HOME}/local.config.yml"
 export PYGEOAPI_OPENAPI="${PYGEOAPI_HOME}/local.openapi.yml"
