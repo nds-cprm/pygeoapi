@@ -1,0 +1,141 @@
+# =================================================================
+#
+# Author: Carlos Eduardo Mota <cmota.dev@gmail.com>
+#
+# Permission is hereby granted, free of charge, to any person
+# obtaining a copy of this software and associated documentation
+# files (the "Software"), to deal in the Software without
+# restriction, including without limitation the rights to use,
+# copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following
+# conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+# OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+# WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+#
+# =================================================================
+ARG PYTHON_VERSION=3.10.18
+ARG DEBIAN_VERSION=trixie
+
+FROM python:${PYTHON_VERSION}-${DEBIAN_VERSION} AS build
+
+ARG SCHEMAS_OPENGIS_NET=http://schemas.opengis.net/SCHEMAS_OPENGIS_NET.zip
+
+LABEL maintainer="Carlos Eduardo Mota <cmota.dev@gmail.com>"
+
+# Docker file for full geoapi server with libs/packages for all providers.
+# Server runs with gunicorn. You can override ENV settings.
+# Defaults:
+# SCRIPT_NAME=/
+# CONTAINER_NAME=pygeoapi
+# CONTAINER_HOST=0.0.0.0
+# CONTAINER_PORT=80
+# WSGI_WORKERS=4
+# WSGI_WORKER_TIMEOUT=6000
+# WSGI_WORKER_CLASS=gevent
+
+# Calls entrypoint.sh to run. Inspect it for options.
+# Contains some test data. Also allows you to verify by running all unit tests.
+# Simply run: docker run -it geopython/pygeoapi test
+# Override the default config file /pygeoapi/local.config.yml
+# via Docker Volume mapping or within a docker-compose.yml file. See example at
+# https://github.com/geopython/demo.pygeoapi.io/tree/master/services/pygeoapi
+
+WORKDIR /pygeoapi
+
+COPY . .
+
+# Build dependencies
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends --no-install-suggests \
+    curl \
+    unzip \
+    build-essential \
+    libev-dev \
+    libyaml-dev \
+    libgeos-dev \
+    libproj-dev \
+    libgdal-dev \
+    libmapserver-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# OGC schemas local setup
+RUN mkdir /schemas.opengis.net && \
+    curl -o /tmp/schemas.zip ${SCHEMAS_OPENGIS_NET} && \
+    unzip /tmp/schemas.zip "ogcapi/*" -d /schemas.opengis.net
+
+# build virtualenv
+RUN python -m venv --prompt pygeoapi /pygeoapi/venv && \
+    . /pygeoapi/venv/bin/activate && \
+    python3 -m pip install --no-cache-dir --upgrade wheel "Setuptools<81" "Cython<3.0" && \
+    # GDAL + MapServer
+    GDAL_VERSION=$(gdal-config --version) && \
+    MAPSERVER_VERSION=$(dpkg -l | grep libmapserver | head -n 1 | awk '{print substr($3,0,5)}') && \
+    python3 -m pip install --no-cache-dir \
+        gdal==${GDAL_VERSION} \
+        mapscript==${MAPSERVER_VERSION} && \
+    # Extras
+    python3 -m pip install --no-cache-dir -r requirements-admin.txt && \
+    python3 -m pip install --no-cache-dir -r requirements-docker.txt && \
+    python3 -m pip install --no-cache-dir -r requirements-provider.txt && \
+    # Install pygeoapi (--no-build-isolation + Cython<3.0 is for PyYAML: https://github.com/yaml/pyyaml/issues/724)
+    python3 -m pip install --no-cache-dir --no-build-isolation -e . 
+
+
+# Release pygeoapi
+ARG PYTHON_VERSION
+ARG DEBIAN_VERSION
+
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_VERSION} AS release
+
+# Copy the source code and virtualenv from the build stage
+COPY --from=build /pygeoapi /pygeoapi
+COPY --from=build /schemas.opengis.net /schemas.opengis.net
+
+WORKDIR /pygeoapi
+
+ARG TZ="Etc/UTC"
+ARG LANG="en_US.UTF-8"
+
+ENV TZ=${TZ} \
+    LANG=${LANG} \
+    DEBIAN_FRONTEND="noninteractive"
+
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends --no-install-suggests \
+    locales \
+    tzdata \
+    libcares2 \
+    libev4t64 \
+    libyaml-0-2 \
+    libsqlite3-mod-spatialite \
+    libgeos-c1v5 \
+    libproj25 \
+    proj-data \
+    libgdal36 \
+    libmapserver2 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8 && \
+    echo "For ${TZ} date=$(date)" && echo "Locale=$(locale)" 
+
+# Set default config and entrypoint for Docker Image
+RUN ln -s /pygeoapi/docker/default.config.yml /pygeoapi/local.config.yml && \
+    ln -s /pygeoapi/docker/entrypoint.sh /entrypoint.sh && \
+    # turn openapi yaml writeable by root, for historical reasons
+    touch /pygeoapi/local.openapi.yml && \
+    chmod g=u /pygeoapi/local.openapi.yml
+
+ENTRYPOINT ["/entrypoint.sh"]

@@ -36,6 +36,8 @@ echo "START /entrypoint.sh"
 
 set +e
 
+source /pygeoapi/venv/bin/activate
+
 export PYGEOAPI_HOME=/pygeoapi
 
 if [[ -z "$PYGEOAPI_CONFIG" ]]; then
